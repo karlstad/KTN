@@ -22,13 +22,13 @@ func TCP_receive(conn net.Conn/*, ch_receive chan<- config.ClientMessage*/) {
 		if err != nil {
 			log.Printf("TCP_receive: json error:", err)
 		}
-		//fmt.Printf("%s, %s, %s, %s", msg.timestamp, msg.sender, msg.response, msg.content)
+		fmt.Printf("%s, %s, %s, %s", msg.Timestamp, msg.Sender, msg.Response, msg.Content)
 	}
 }
 
 func TCP_send(conn net.Conn, ch_send <-chan config.ClientMessage) {
 	for{
-		msg := ch_send
+		msg := <- ch_send
 		json_msg, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("TCP_send: json error:", err)
@@ -61,7 +61,7 @@ func main(){
 	var ch_send = make(chan config.ClientMessage)
 	//var ch_receive = make(chan config.ClientMessage)
 
-	conn := TCP_init("pella")
+	conn := TCP_init("78.91.15.53:30000")
 	defer conn.Close()
 	
 	go TCP_receive(conn)
@@ -69,14 +69,14 @@ func main(){
 
 	var input string
 	var splitted []string
-	fmt.Print("Enter command: \n login username \n logout \n names \n help \n All other inputs will be treated as messages")
-	fmt.Printf("Please log in to be able to chat")
+	fmt.Print("Enter command: \n login username \n logout \n names \n help \n All other inputs will be treated as messages\n")
+	fmt.Printf("Please log in to be able to chat\n")
 	for{
 		fmt.Scanln(&input)
 		
 		splitted = strings.Split(input, " ")
 		fmt.Printf("%q\n", splitted)
-		msg := config.ClientMessage{Request: splitted[0], Content: splitted[1]}
+		msg := config.ClientMessage{Request: splitted[0], Content: splitted[1:]}
 		if msg.Request == "login"{
 			logged_in = true
 			ch_send <- msg

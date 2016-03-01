@@ -5,6 +5,7 @@ import (
 	"encoding/json"	
 	"net"
 	"time"
+	"strings"
 )
 
 type Client struct {
@@ -35,7 +36,7 @@ var BroadcastChan = make(chan ServerMessage)
 var History = make([]string, 0)
 
 func TCPListen() {
-	TcpPort, _ := net.ResolveTCPAddr("tcp", "10.20.70.103:30000")
+	TcpPort, _ := net.ResolveTCPAddr("tcp", "78.91.15.53:30000")
 	TcpListener, _ := net.ListenTCP("tcp", TcpPort)
 	for {
 		connection,_ := TcpListener.AcceptTCP()
@@ -56,18 +57,18 @@ func TCPListen() {
 
 func TCPSend(chSend <-chan ServerMessage){
 	for{
-		msg := chSend
+		msg := <- chSend
 		json_msg, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("TCP_send: json error:", err)
 		}
-		(msg.conn).Write([]byte(json_msg))
+		msg.conn.Write([]byte(json_msg))
 	}
 }
 
 func TCPBroadcast(chMsg <-chan ServerMessage){
 	for{
-		msg := chMsg
+		msg := <- chMsg
 		json_msg, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("TCP_send: json error:", err)
@@ -88,6 +89,7 @@ func TCPReceive(conn *net.TCPConn){
 		if err != nil {
 			log.Printf("TCP_receive: json error:", err)
 		}
+		log.Printf("%q\n", msg)
 		ReceivedChan <- msg
 	}
 }
@@ -108,7 +110,7 @@ func main() {
 						if msg.content != Connections[client].username {
 							Connections[client].username = msg.content
 							SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "info", content: "Login successful"}
-							SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "history", content: History}
+							SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "history", content: strings.Join(History, "\n")}
 						} else {
 							SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "error", content: "User already logged in!"}
 						}
@@ -118,23 +120,23 @@ func main() {
 			case "logout":
 				for client := range Connections {
 					if Connections[client].conn == msg.conn {
-						client.username = ""
+						Connections[client].username = ""
 						SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "info", content: "Logout successful"}
 					}
 				}
 			case "msg":
 				History = append(History, msg.content)
-				BroadcastChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850)(), sender: "server", response : "message", content: msg.content}
+				BroadcastChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response : "message", content: msg.content}
 			case "names":
-				usernames := make([]string)
+				usernames := make([]string, 0)
 				for client := range Connections{
 					usernames = append(usernames, Connections[client].username)
 				}
 					
-				SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850)(), sender: "server", response : "message", content: usernames}
+				SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response : "message", content: strings.Join(usernames, "\n")}
 				
 			//case "help":
-				
+		
 
 		}
 	}
