@@ -76,7 +76,7 @@ func main(){
 		
 		splitted = strings.Split(input, " ")
 		fmt.Printf("%q\n", splitted)
-		msg := config.ClientMessage{Request: splitted[0], Content: splitted[1:]}
+		msg := config.ClientMessage{Request: splitted[0], Content: strings.Join(splitted[1:], " ")}
 		if msg.Request == "login"{
 			logged_in = true
 			ch_send <- msg
