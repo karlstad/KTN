@@ -29,6 +29,7 @@ func TCP_receive(conn net.Conn/*, ch_receive chan<- config.ClientMessage*/) {
 func TCP_send(conn net.Conn, ch_send <-chan config.ClientMessage) {
 	for{
 		msg := <- ch_send
+		log.Printf("TCP %s, %s\n", msg.Request, msg.Content)
 		json_msg, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("TCP_send: json error:", err)
@@ -73,15 +74,15 @@ func main(){
 	fmt.Printf("Please log in to be able to chat\n")
 	for{
 		fmt.Scanln(&input)
-		
-		splitted = strings.Split(input, " ")
-		fmt.Printf("%q\n", splitted)
+
+		splitted = strings.Split(input, "<")
+		//fmt.Printf("%q\n", splitted)
 		msg := config.ClientMessage{Request: splitted[0], Content: strings.Join(splitted[1:], " ")}
+		//fmt.Printf("%s\n", splitted[0])
 		if msg.Request == "login"{
 			logged_in = true
 			ch_send <- msg
-		}
-		if logged_in == true{
+		}else if logged_in == true{
 			switch msg.Request{
 				case "logout":
 					logged_in = false

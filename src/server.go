@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 	"strings"
+	"bufio"
 )
 
 type Client struct {
@@ -36,7 +37,7 @@ var BroadcastChan = make(chan ServerMessage)
 var History = make([]string, 0)
 
 func TCPListen() {
-	TcpPort, _ := net.ResolveTCPAddr("tcp", "78.91.15.53:30000")
+	TcpPort, _ := net.ResolveTCPAddr("tcp", ":30000")
 	TcpListener, _ := net.ListenTCP("tcp", TcpPort)
 	for {
 		connection,_ := TcpListener.AcceptTCP()
@@ -80,16 +81,19 @@ func TCPBroadcast(chMsg <-chan ServerMessage){
 }
 
 func TCPReceive(conn *net.TCPConn){
-	received := make([]byte, 1024)
+	received1, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
+	//received := make([]byte, 1024)
 	for{
-		conn.Read(received)
+		received1 = strings.Trim(received1, "\x00")
+		received := []byte(received1)
+		//conn.Read(received)
 		
 		var msg ClientMessage
 		err := json.Unmarshal(received, &msg)
 		if err != nil {
 			log.Printf("TCP_receive: json error:", err)
 		}
-		log.Printf("%q\n", msg)
+		log.Printf("%s\n", msg)
 		ReceivedChan <- msg
 	}
 }
@@ -106,6 +110,7 @@ func main() {
 		switch msg.request {
 			case "login":
 				for client := range Connections {
+					log.Printf("%s", Connections[client].username)
 					if msg.conn == Connections[client].conn {
 						if msg.content != Connections[client].username {
 							Connections[client].username = msg.content
