@@ -10,6 +10,7 @@ import(
 	"time"
 	"bufio"
 )
+
 type ServerMessage struct {
 	Timestamp string `json:"timestamp"`
 	Sender string `json:"sender"`
@@ -24,10 +25,11 @@ type ClientMessage struct{
 
 func TCP_receive(conn net.Conn, ch_receive chan<- ServerMessage) {
 	for{
-		rec, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
-		rec = strings.Trim(rec, "\x00")
+		rec, _ := bufio.NewReader(conn).ReadString(byte('}'))
+		//rec = strings.Trim(rec, "\x00")
+		//received := append([]byte(rec), byte('}'))
 		received := []byte(rec)
-		//log.Printf("Received %s\n", rec)
+		log.Printf("Received %s\n", rec)
 		
 		var msg ServerMessage
 		err := json.Unmarshal(received, &msg)
@@ -46,7 +48,7 @@ func TCP_send(conn net.Conn, ch_send <-chan ClientMessage) {
 		if err != nil {
 			log.Printf("TCP_send: json error:", err)
 		}
-		conn.Write(append([]byte(json_msg),byte('\x00')))
+		conn.Write([]byte(json_msg))
 		time.Sleep(100*time.Millisecond)
 	}
 }
@@ -93,7 +95,7 @@ func main(){
 	ch_send := make(chan ClientMessage)
 	ch_receive := make(chan ServerMessage, 5)
 
-	conn := TCP_init("192.168.1.29:30000")
+	conn := TCP_init("78.91.15.53:30000")
 	defer conn.Close()
 	
 	go TCP_receive(conn, ch_receive)
@@ -102,8 +104,6 @@ func main(){
 
 	var splitted []string
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Enter command: \n login username \n logout \n names \n help \n All other inputs will be treated as messages\n")
-	fmt.Printf("Please log in to be able to chat\n")
 	for {
 		text, _ := reader.ReadString('\n')
 		splitted = strings.Fields(text)
