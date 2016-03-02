@@ -7,6 +7,7 @@ import (
 	"time"
 	"strings"
 	"bufio"
+	"bytes"
 )
 
 type Client struct {
@@ -15,22 +16,22 @@ type Client struct {
 }
 
 type ServerMessage struct {
-	timestamp string
-	sender string
-	response string
-	content string
+	Timestamp string
+	Sender string
+	Response string
+	Content string
 	conn *net.TCPConn `json="-"`
 }
 
 type ClientMessage struct{
-	request string
-	content string
+	Request string
+	Content string
 	conn *net.TCPConn `json="-"` //Denne vil ikke bli med i json encoding --> Client sender ikke denne, den opprettes server-side
 }
 
 const TCPPORT = ""
 
-var Connections = make([]Client,0)
+var Connections = make([]*Client,0)
 var ReceivedChan = make(chan ClientMessage, 5)
 var SendChan = make(chan ServerMessage)
 var BroadcastChan = make(chan ServerMessage)
@@ -41,20 +42,12 @@ func TCPListen() {
 	TcpListener, _ := net.ListenTCP("tcp", TcpPort)
 	for {
 		connection,_ := TcpListener.AcceptTCP()
-		Connections = append(Connections, Client{conn: connection, username: ""})
+		log.Printf("Connection made to %s!\n", connection.RemoteAddr().String())
 		go TCPReceive(connection)
+		Connections = append(Connections, &Client{conn: connection, username: ""})
+		time.Sleep(100*time.Millisecond)
 	}
 }
-
-//Unødvendig?
-/*func IsLoggedIn(username struct) bool {
-	for client := range Connections {
-		if client.username == username {
-			return true
-		}
-	}
-	return false
-}*/
 
 func TCPSend(chSend <-chan ServerMessage){
 	for{
@@ -63,7 +56,8 @@ func TCPSend(chSend <-chan ServerMessage){
 		if err != nil {
 			log.Printf("TCP_send: json error:", err)
 		}
-		msg.conn.Write([]byte(json_msg))
+		msg.conn.Write(append([]byte(json_msg),byte('\x00')))
+		time.Sleep(100*time.Millisecond)
 	}
 }
 
@@ -72,33 +66,74 @@ func TCPBroadcast(chMsg <-chan ServerMessage){
 		msg := <- chMsg
 		json_msg, err := json.Marshal(msg)
 		if err != nil {
-			log.Printf("TCP_send: json error:", err)
+			log.Printf("TCP_broadcast: json error:", err)
 		}
-		for clients := range Connections{
-			Connections[clients].conn.Write([]byte(json_msg))
+		for _, client := range Connections{
+			client.conn.Write([]byte(json_msg))
 		}
+		time.Sleep(100*time.Millisecond)
 	}
 }
 
 func TCPReceive(conn *net.TCPConn){
-	received1, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
-	//received := make([]byte, 1024)
+	log.Printf("Started TCPReceive for %s!\n", conn.RemoteAddr().String())
 	for{
-		received1 = strings.Trim(received1, "\x00")
-		received := []byte(received1)
-		//conn.Read(received)
+		rec, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
+		rec = strings.Trim(rec, "\x00")
+		received := []byte(rec)
+		log.Printf("Received %s\n", rec)
 		
 		var msg ClientMessage
 		err := json.Unmarshal(received, &msg)
 		if err != nil {
-			log.Printf("TCP_receive: json error:", err)
+			log.Printf("TCP_receive: json error! Shutting down thread. (IP: %s", conn.RemoteAddr().String())
+			KillConnection(conn)
+			return
 		}
-		log.Printf("%s\n", msg)
+		msg.conn = conn
 		ReceivedChan <- msg
+		time.Sleep(100*time.Millisecond)
 	}
 }
 
+func IsLoggedIn(conn *net.TCPConn) bool {
+	for _, client := range Connections {
+		log.Printf("Logged in: %s, %s", client.conn == conn, client.username)
+		if client.conn == conn && client.username != "" {
+			return true
+		}
+	}
+	return false
+}
 
+func KillConnection(conn *net.TCPConn) {
+	for key, client := range Connections {
+		if client.conn == conn {
+			Connections = append(Connections[:key], Connections[key+1:]...)
+			conn.Close()
+		}
+	}
+}
+
+func GetUsername(conn *net.TCPConn) string {
+	for _,client := range Connections {
+		if client.conn == conn {
+			return client.username
+		}
+	}
+	return ""
+}
+
+func AddHistoryEntry(msg *ClientMessage) {
+	var buf bytes.Buffer
+	buf.WriteString("<")
+	buf.WriteString(time.Now().Format(time.RFC850))
+	buf.WriteString("> ")
+	buf.WriteString(GetUsername(msg.conn))
+	buf.WriteString(": ")
+	buf.WriteString(msg.Content)
+	History = append(History, buf.String())
+}
 
 func main() {
 	go TCPListen()
@@ -107,43 +142,52 @@ func main() {
 	
 	for {
 		msg := <- ReceivedChan
-		switch msg.request {
-			case "login":
-				for client := range Connections {
-					log.Printf("%s", Connections[client].username)
-					if msg.conn == Connections[client].conn {
-						if msg.content != Connections[client].username {
-							Connections[client].username = msg.content
-							SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "info", content: "Login successful"}
-							SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "history", content: strings.Join(History, "\n")}
-						} else {
-							SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "error", content: "User already logged in!"}
+		if IsLoggedIn(msg.conn) {
+			switch msg.Request {
+				case "login":
+					log.Println("Login request")
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "You are already logged in", conn: msg.conn}
+				case "logout":
+					for _, client := range Connections {
+						if client.conn == msg.conn {
+							client.username = ""
+							SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: "Logout successful", conn: msg.conn}
 						}
-						break
 					}
-				}		
-			case "logout":
-				for client := range Connections {
-					if Connections[client].conn == msg.conn {
-						Connections[client].username = ""
-						SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response: "info", content: "Logout successful"}
+				case "msg":
+					AddHistoryEntry(&msg)
+					BroadcastChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: GetUsername(msg.conn), Response : "message", Content: msg.Content, conn: msg.conn}
+				case "names":
+					usernames := make([]string, 0)
+					for _, client := range Connections{
+						usernames = append(usernames, client.username)
+					}			
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response : "message", Content: strings.Join(usernames, "\n"), conn: msg.conn}
+				default:
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "Invalid request", conn: msg.conn}
+			}
+		} else {
+			switch msg.Request {
+				case "login":
+					for _, client := range Connections {
+						if msg.conn == client.conn {
+							if msg.Content != client.username {
+								client.username = msg.Content
+								log.Printf("Username set to: %s", client.username)
+								SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: "Login successful", conn: msg.conn}
+								SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "history", Content: strings.Join(History, "\n"), conn: msg.conn}
+							} else {
+								SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "User already logged in!", conn: msg.conn}
+							}
+							break
+						}
 					}
-				}
-			case "msg":
-				History = append(History, msg.content)
-				BroadcastChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response : "message", content: msg.content}
-			case "names":
-				usernames := make([]string, 0)
-				for client := range Connections{
-					usernames = append(usernames, Connections[client].username)
-				}
-					
-				SendChan <- ServerMessage{timestamp: time.Now().Format(time.RFC850), sender: "server", response : "message", content: strings.Join(usernames, "\n")}
-				
-			//case "help":
-		
-
+				//case "help":
+				default:
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "You are not logged in!", conn: msg.conn}
+			}	
 		}
+		time.Sleep(100*time.Millisecond)
 	}
 }
 

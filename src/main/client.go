@@ -1,40 +1,53 @@
 package main
 
 import(
-	"config"
 	"fmt"
+	"os"
 	"strings"
 	"encoding/json"
 	"net"
 	"log"
+	"time"
+	"bufio"
 )
+type ClientMessage struct {
+	Request string
+	Content string
+}
 
-func TCP_receive(conn net.Conn/*, ch_receive chan<- config.ClientMessage*/) {
+type ServerMessage struct{
+	Timestamp string
+	Sender string
+	Response string
+	Content string
+}
+
+func TCP_receive(conn net.Conn, ch_receive chan<- ServerMessage) {
 	for{
-		//Wait for message ending in '\0'
-		//received, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
-		received_byte := make([]byte, 1024)
+		rec, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
+		rec = strings.Trim(rec, "\x00")
+		received := []byte(rec)
+		//log.Printf("Received %s\n", rec)
 		
-		conn.Read(received_byte)
-		
-		var msg config.ServerMessage
-		err := json.Unmarshal(received_byte, &msg)
+		var msg ServerMessage
+		err := json.Unmarshal(received, &msg)
 		if err != nil {
-			log.Printf("TCP_receive: json error:", err)
+			log.Fatal("TCP_receive: json error:", err)
 		}
-		fmt.Printf("%s, %s, %s, %s", msg.Timestamp, msg.Sender, msg.Response, msg.Content)
+		ch_receive <- msg
+		time.Sleep(100*time.Millisecond)
 	}
 }
 
-func TCP_send(conn net.Conn, ch_send <-chan config.ClientMessage) {
+func TCP_send(conn net.Conn, ch_send <-chan ClientMessage) {
 	for{
 		msg := <- ch_send
-		log.Printf("TCP %s, %s\n", msg.Request, msg.Content)
 		json_msg, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("TCP_send: json error:", err)
 		}
-		conn.Write([]byte(json_msg))
+		conn.Write(append([]byte(json_msg),byte('\x00')))
+		time.Sleep(100*time.Millisecond)
 	}
 }
 
@@ -57,45 +70,55 @@ func TCP_init(ip string) *net.TCPConn {
 	return conn
 }
 
-func main(){
-	var logged_in bool
-	var ch_send = make(chan config.ClientMessage)
-	//var ch_receive = make(chan config.ClientMessage)
+func Print(ch_receive <-chan ServerMessage) {
+	for {
+		msg := <- ch_receive
+		switch msg.Response {
+			case "error":
+				fmt.Printf("<%s> ERROR: %s\n", msg.Timestamp, msg.Content)
+			case "info":
+				fmt.Printf("INFO: %s\n", msg.Content)
+			case "message":
+				fmt.Printf("<%s> %s said: %s\n", msg.Timestamp, msg.Sender, msg.Content)
+			case "history":
+				fmt.Printf("%s", msg.Content)
+			default:
+				log.Fatal("Invalid response from server!")
+		}
+		time.Sleep(100*time.Millisecond)
+	}
+}
 
-	conn := TCP_init("78.91.15.53:30000")
+func main(){
+	ch_send := make(chan ClientMessage)
+	ch_receive := make(chan ServerMessage, 5)
+
+	conn := TCP_init("192.168.1.29:30000")
 	defer conn.Close()
 	
-	go TCP_receive(conn)
+	go TCP_receive(conn, ch_receive)
 	go TCP_send(conn, ch_send)
+	go Print(ch_receive)
 
-	var input string
 	var splitted []string
+	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("Enter command: \n login username \n logout \n names \n help \n All other inputs will be treated as messages\n")
 	fmt.Printf("Please log in to be able to chat\n")
-	for{
-		fmt.Scanln(&input)
-
-		splitted = strings.Split(input, "<")
-		//fmt.Printf("%q\n", splitted)
-		msg := config.ClientMessage{Request: splitted[0], Content: strings.Join(splitted[1:], " ")}
-		//fmt.Printf("%s\n", splitted[0])
-		if msg.Request == "login"{
-			logged_in = true
+	for {
+		text, _ := reader.ReadString('\n')
+		splitted = strings.Fields(text)
+		var msg ClientMessage
+		req := splitted[0]
+		if req == "login" {
+			msg = ClientMessage{Request: splitted[0], Content: splitted[1]}
 			ch_send <- msg
-		}else if logged_in == true{
-			switch msg.Request{
-				case "logout":
-					logged_in = false
-					ch_send <- msg
-				case "names":
-					ch_send <- msg
-				case "help":
-					ch_send <- msg
-				default:
-					msg.Request = "msg"
-					msg.Content = input
-					ch_send <- msg
-			}
+		} else if req == "logout" || req == "names" || req == "help" {
+			msg = ClientMessage{Request: splitted[0]}
+		} else {
+			msg.Request = "msg"
+			msg.Content = text
+			ch_send <- msg
 		}
+		time.Sleep(100*time.Millisecond)
 	}
 }
