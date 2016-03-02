@@ -9,7 +9,16 @@ import(
 	"log"
 	"time"
 	"bufio"
+	//"reflect"
 )
+
+type HistoryMessage struct {
+	Timestamp string `json:"timestamp"`
+	Sender string `json:"sender"`
+	Response string	`json:"response"`
+	Content []string `json:"content"`
+	conn *net.TCPConn `json:"-"`
+}
 
 type ServerMessage struct {
 	Timestamp string `json:"timestamp"`
@@ -23,11 +32,11 @@ type ClientMessage struct{
 	Content string `json:"content"`
 }
 
+var HistoryChan = make(chan HistoryMessage)
+
 func TCP_receive(conn net.Conn, ch_receive chan<- ServerMessage) {
 	for{
-		rec, _ := bufio.NewReader(conn).ReadString(byte('}'))
-		//rec = strings.Trim(rec, "\x00")
-		//received := append([]byte(rec), byte('}'))
+		/*rec, _ := bufio.NewReader(conn).ReadString(byte('}'))
 		received := []byte(rec)
 		log.Printf("Received %s\n", rec)
 		
@@ -35,8 +44,21 @@ func TCP_receive(conn net.Conn, ch_receive chan<- ServerMessage) {
 		err := json.Unmarshal(received, &msg)
 		if err != nil {
 			log.Fatal("TCP_receive: json error:", err)
-		}
-		ch_receive <- msg
+		}*/
+		d := json.NewDecoder(conn)
+		log.Printf("Received: %s", d)
+		var msg ServerMessage
+		//var hist HistoryMessage
+		d.Decode(&msg)
+		//d.Decode(&hist)
+		//log.Printf("Received %s\n", reflect.TypeOf(msg.Content))
+		//log.Printf("Received %s\n", msg.Content)
+		//if msg.Content != "" {
+		//	ch_receive <- msg
+		//}
+		//if hist.Content != nil {
+		//	HistoryChan <- hist
+		//}
 		time.Sleep(100*time.Millisecond)
 	}
 }
@@ -72,20 +94,30 @@ func TCP_init(ip string) *net.TCPConn {
 	return conn
 }
 
+//{"content": ["{\"content\": \"magnus logged in\", \"timestamp\": \"02-03-2016 14:18:34\", \"sender\": \"system\", \"response\": \"info\"}", 
 func Print(ch_receive <-chan ServerMessage) {
 	for {
-		msg := <- ch_receive
-		switch msg.Response {
-			case "error":
-				fmt.Printf("<%s> ERROR: %s\n", msg.Timestamp, msg.Content)
-			case "info":
-				fmt.Printf("INFO: %s\n", msg.Content)
-			case "message":
-				fmt.Printf("<%s> %s said: %s\n", msg.Timestamp, msg.Sender, msg.Content)
-			case "history":
-				fmt.Printf("%s", msg.Content)
-			default:
-				log.Fatal("Invalid response from server!")
+		select {
+			case msg := <- ch_receive:
+				switch msg.Response {
+					case "error":
+						fmt.Printf("<%s> ERROR: %s\n", msg.Timestamp, msg.Content)
+					case "info":
+						fmt.Printf("INFO: %s\n", msg.Content)
+					case "message":
+						fmt.Printf("<%s> %s said: %s\n", msg.Timestamp, msg.Sender, msg.Content)
+					default:
+						log.Fatal("Invalid response from server!")
+					}
+			case msg := <- HistoryChan:
+				//var msg ServerMessage
+				fmt.Printf("HISTORY: %s", msg.Content)
+				/*for _, elem := range msg.Content {
+					err := json.Unmarshal(elem, &msg)
+					if err != nil {
+						log.Fatal("History could not be decoded: ", err)
+					}
+				}*/		
 		}
 		time.Sleep(100*time.Millisecond)
 	}
@@ -95,7 +127,7 @@ func main(){
 	ch_send := make(chan ClientMessage)
 	ch_receive := make(chan ServerMessage, 5)
 
-	conn := TCP_init("78.91.15.53:30000")
+	conn := TCP_init("10.20.70.103:30000")
 	defer conn.Close()
 	
 	go TCP_receive(conn, ch_receive)

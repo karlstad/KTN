@@ -16,6 +16,14 @@ type Client struct {
 	username string
 }
 
+type HistoryMessage struct {
+	Timestamp string `json:"timestamp"`
+	Sender string `json:"sender"`
+	Response string	`json:"response"`
+	Content []string `json:"content"`
+	conn *net.TCPConn `json:"-"`
+}
+
 type ServerMessage struct {
 	Timestamp string `json:"timestamp"`
 	Sender string `json:"sender"`
@@ -36,6 +44,7 @@ var Connections = make([]*Client,0)
 var ReceivedChan = make(chan ClientMessage, 5)
 var SendChan = make(chan ServerMessage)
 var BroadcastChan = make(chan ServerMessage)
+var HistoryChan = make(chan HistoryMessage)
 var History = make([][]byte, 0)
 var jsonEscape = regexp.MustCompile("^\"$")
 var welcomeMessage = "Enter command: \n login <username> \n logout \n names \n help \n All other inputs will be treated as messages\n Please log in to be able to chat\n";
@@ -53,21 +62,32 @@ func TCPListen() {
 	}
 }
 
-func TCPSend(chSend <-chan ServerMessage){
+func TCPSend(){
 	for{
-		msg := <- chSend
-		json_msg, err := json.Marshal(msg)
-		if err != nil {
-			log.Printf("TCP_send: json error:", err)
+		select {
+			case msg := <- SendChan:
+				json_msg, err := json.Marshal(msg)
+				if err != nil {
+					log.Printf("TCP_send: json error:", err)
+				}
+				msg.conn.Write([]byte(json_msg))
+				log.Printf("Sent: %s", json_msg)
+			case msg := <- HistoryChan:
+				json_msg, err := json.Marshal(msg)
+				if err != nil {
+					log.Printf("TCP_send: json error:", err)
+				}
+				log.Printf("Sent: %s", json_msg)
+				msg.conn.Write([]byte(json_msg))
 		}
-		msg.conn.Write([]byte(json_msg))
+		
 		time.Sleep(100*time.Millisecond)
 	}
 }
 
-func TCPBroadcast(chMsg <-chan ServerMessage){
+func TCPBroadcast(){
 	for{
-		msg := <- chMsg
+		msg := <- BroadcastChan
 		json_msg, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("TCP_broadcast: json error:", err)
@@ -82,7 +102,6 @@ func TCPBroadcast(chMsg <-chan ServerMessage){
 func TCPReceive(conn *net.TCPConn){
 	for{
 		rec, _ := bufio.NewReader(conn).ReadString(byte('}'))
-		//rec = strings.Trim(rec, "\x00")
 		received := []byte(rec)
 		AddHistoryEntry(received)
 		
@@ -126,16 +145,15 @@ func GetUsername(conn *net.TCPConn) string {
 	return ""
 }
 
-//{"content": ["{\"content\": \"magnus logged in\", \"timestamp\": \"02-03-2016 14:18:34\", \"sender\": \"system\", \"response\": \"info\"}
 func AddHistoryEntry(msg []byte) {
 	entry := []byte(jsonEscape.ReplaceAll(msg, []byte("\\\"")))
 	History = append(History, entry)
 }
 
-func ToString(hist [][]byte) string {
-	ret := ""
+func ToStringArr(hist [][]byte) []string {
+	ret := make([]string, 0)
 	for key := range hist {
-		ret += string(hist[key])
+		ret = append(ret,string(hist[key]))
 	}
 	return ret
 }
@@ -146,8 +164,8 @@ func main() {
 	nameCheck := regexp.MustCompile("^[a-zA-Z0-9]*$")
 
 	go TCPListen()
-	go TCPSend(SendChan)
-	go TCPBroadcast(BroadcastChan)
+	go TCPSend()
+	go TCPBroadcast()
 	
 	for {
 		msg := <- ReceivedChan
@@ -184,7 +202,7 @@ func main() {
 								if nameCheck.MatchString(msg.Content){
 									client.username = msg.Content
 									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: "Login successful", conn: msg.conn}
-									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "history", Content: ToString(History), conn: msg.conn}
+									HistoryChan <- HistoryMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "history", Content: ToStringArr(History), conn: msg.conn}
 								} else {
 									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "Only alphanumerical usernames are acceptable.", conn: msg.conn}
 								}
