@@ -8,6 +8,7 @@ import (
 	"strings"
 	"bufio"
 	"bytes"
+	"regexp"
 )
 
 type Client struct {
@@ -16,17 +17,17 @@ type Client struct {
 }
 
 type ServerMessage struct {
-	Timestamp string
-	Sender string
-	Response string
-	Content string
-	conn *net.TCPConn `json="-"`
+	Timestamp string `json:"timestamp"`
+	Sender string `json:"sender"`
+	Response string	`json:"response"`
+	Content string `json:"content"`
+	conn *net.TCPConn `json:"-"`
 }
 
 type ClientMessage struct{
-	Request string
-	Content string
-	conn *net.TCPConn `json="-"` //Denne vil ikke bli med i json encoding --> Client sender ikke denne, den opprettes server-side
+	Request string `json:"request"`
+	Content string `json:"content"`
+	conn *net.TCPConn `json:"-"`
 }
 
 const TCPPORT = ""
@@ -69,20 +70,20 @@ func TCPBroadcast(chMsg <-chan ServerMessage){
 			log.Printf("TCP_broadcast: json error:", err)
 		}
 		for _, client := range Connections{
-			client.conn.Write([]byte(json_msg))
+			if client.conn != msg.conn {
+				client.conn.Write(append([]byte(json_msg),byte('\x00')))
+			}
 		}
 		time.Sleep(100*time.Millisecond)
 	}
 }
 
 func TCPReceive(conn *net.TCPConn){
-	log.Printf("Started TCPReceive for %s!\n", conn.RemoteAddr().String())
 	for{
 		rec, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
 		rec = strings.Trim(rec, "\x00")
 		received := []byte(rec)
-		log.Printf("Received %s\n", rec)
-		
+		log.Printf("Received: %s", rec)
 		var msg ClientMessage
 		err := json.Unmarshal(received, &msg)
 		if err != nil {
@@ -98,7 +99,6 @@ func TCPReceive(conn *net.TCPConn){
 
 func IsLoggedIn(conn *net.TCPConn) bool {
 	for _, client := range Connections {
-		log.Printf("Logged in: %s, %s", client.conn == conn, client.username)
 		if client.conn == conn && client.username != "" {
 			return true
 		}
@@ -136,6 +136,10 @@ func AddHistoryEntry(msg *ClientMessage) {
 }
 
 func main() {
+	helpTextNotLoggedIn := "\nCommands:\nlogin <username>\nhelp"
+	helpTextLoggedIn := "\nCommands:\nlogin <username>\nlogout\nnames\nhelp"
+	nameCheck := regexp.MustCompile("^[a-zA-Z0-9]*$")
+
 	go TCPListen()
 	go TCPSend(SendChan)
 	go TCPBroadcast(BroadcastChan)
@@ -145,7 +149,6 @@ func main() {
 		if IsLoggedIn(msg.conn) {
 			switch msg.Request {
 				case "login":
-					log.Println("Login request")
 					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "You are already logged in", conn: msg.conn}
 				case "logout":
 					for _, client := range Connections {
@@ -163,6 +166,8 @@ func main() {
 						usernames = append(usernames, client.username)
 					}			
 					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response : "message", Content: strings.Join(usernames, "\n"), conn: msg.conn}
+				case "help":
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "message", Content: helpTextLoggedIn, conn: msg.conn}
 				default:
 					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "Invalid request", conn: msg.conn}
 			}
@@ -172,19 +177,23 @@ func main() {
 					for _, client := range Connections {
 						if msg.conn == client.conn {
 							if msg.Content != client.username {
-								client.username = msg.Content
-								log.Printf("Username set to: %s", client.username)
-								SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: "Login successful", conn: msg.conn}
-								SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "history", Content: strings.Join(History, "\n"), conn: msg.conn}
+								if nameCheck.MatchString(msg.Content){
+									client.username = msg.Content
+									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: "Login successful", conn: msg.conn}
+									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "history", Content: strings.Join(History, "\n"), conn: msg.conn}
+								} else {
+									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "Only alphanumerical usernames are acceptable.", conn: msg.conn}
+								}
 							} else {
 								SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "User already logged in!", conn: msg.conn}
 							}
 							break
 						}
 					}
-				//case "help":
+				case "help":
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "message", Content: helpTextNotLoggedIn, conn: msg.conn}
 				default:
-					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "You are not logged in!", conn: msg.conn}
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "You are not logged in! Please use <help> for a list of commands.", conn: msg.conn}
 			}	
 		}
 		time.Sleep(100*time.Millisecond)

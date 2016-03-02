@@ -10,16 +10,16 @@ import(
 	"time"
 	"bufio"
 )
-type ClientMessage struct {
-	Request string
-	Content string
+type ServerMessage struct {
+	Timestamp string `json:"timestamp"`
+	Sender string `json:"sender"`
+	Response string	`json:"response"`
+	Content string `json:"content"`
 }
 
-type ServerMessage struct{
-	Timestamp string
-	Sender string
-	Response string
-	Content string
+type ClientMessage struct{
+	Request string `json:"request"`
+	Content string `json:"content"`
 }
 
 func TCP_receive(conn net.Conn, ch_receive chan<- ServerMessage) {
@@ -114,6 +114,7 @@ func main(){
 			ch_send <- msg
 		} else if req == "logout" || req == "names" || req == "help" {
 			msg = ClientMessage{Request: splitted[0]}
+			ch_send <- msg
 		} else {
 			msg.Request = "msg"
 			msg.Content = text
