@@ -83,7 +83,6 @@ func TCPReceive(conn *net.TCPConn){
 		rec, _ := bufio.NewReader(conn).ReadString(byte('\x00'))
 		rec = strings.Trim(rec, "\x00")
 		received := []byte(rec)
-		log.Printf("Received: %s", rec)
 		var msg ClientMessage
 		err := json.Unmarshal(received, &msg)
 		if err != nil {
