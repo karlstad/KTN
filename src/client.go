@@ -9,7 +9,7 @@ import(
 	"log"
 	"time"
 	"bufio"
-	//"reflect"
+	//"regexp"
 )
 
 type HistoryMessage struct {
@@ -36,29 +36,18 @@ var HistoryChan = make(chan HistoryMessage)
 
 func TCP_receive(conn net.Conn, ch_receive chan<- ServerMessage) {
 	for{
-		/*rec, _ := bufio.NewReader(conn).ReadString(byte('}'))
-		received := []byte(rec)
-		log.Printf("Received %s\n", rec)
-		
-		var msg ServerMessage
-		err := json.Unmarshal(received, &msg)
-		if err != nil {
-			log.Fatal("TCP_receive: json error:", err)
-		}*/
 		d := json.NewDecoder(conn)
-		log.Printf("Received: %s", d)
 		var msg ServerMessage
-		//var hist HistoryMessage
 		d.Decode(&msg)
-		//d.Decode(&hist)
-		//log.Printf("Received %s\n", reflect.TypeOf(msg.Content))
-		//log.Printf("Received %s\n", msg.Content)
-		//if msg.Content != "" {
-		//	ch_receive <- msg
-		//}
-		//if hist.Content != nil {
-		//	HistoryChan <- hist
-		//}
+		if msg.Content == "Login successful" {
+			ch_receive <- msg
+			d_ := json.NewDecoder(conn)
+			var hist HistoryMessage
+			d_.Decode(&hist)
+			HistoryChan <- hist
+		} else {
+			ch_receive <- msg
+		}
 		time.Sleep(100*time.Millisecond)
 	}
 }
@@ -100,24 +89,26 @@ func Print(ch_receive <-chan ServerMessage) {
 		select {
 			case msg := <- ch_receive:
 				switch msg.Response {
+					case "login":
+						fmt.Printf("<%s> INFO: %s logged in\n", msg.Timestamp, msg.Content)
 					case "error":
 						fmt.Printf("<%s> ERROR: %s\n", msg.Timestamp, msg.Content)
 					case "info":
-						fmt.Printf("INFO: %s\n", msg.Content)
+						fmt.Printf("<%s> INFO: %s\n", msg.Timestamp, msg.Content)
 					case "message":
 						fmt.Printf("<%s> %s said: %s\n", msg.Timestamp, msg.Sender, msg.Content)
 					default:
 						log.Fatal("Invalid response from server!")
 					}
 			case msg := <- HistoryChan:
-				//var msg ServerMessage
-				fmt.Printf("HISTORY: %s", msg.Content)
-				/*for _, elem := range msg.Content {
-					err := json.Unmarshal(elem, &msg)
+				var msg_ ServerMessage
+				for _, elem := range msg.Content {
+					err := json.Unmarshal([]byte(elem), &msg_)
 					if err != nil {
 						log.Fatal("History could not be decoded: ", err)
 					}
-				}*/		
+					fmt.Printf("<%s> %s said: %s\n", msg_.Timestamp, msg_.Sender, msg_.Content)
+				}		
 		}
 		time.Sleep(100*time.Millisecond)
 	}
@@ -127,7 +118,7 @@ func main(){
 	ch_send := make(chan ClientMessage)
 	ch_receive := make(chan ServerMessage, 5)
 
-	conn := TCP_init("10.20.70.103:30000")
+	conn := TCP_init("10.20.68.190:30000")
 	defer conn.Close()
 	
 	go TCP_receive(conn, ch_receive)

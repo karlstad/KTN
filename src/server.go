@@ -103,7 +103,6 @@ func TCPReceive(conn *net.TCPConn){
 	for{
 		rec, _ := bufio.NewReader(conn).ReadString(byte('}'))
 		received := []byte(rec)
-		AddHistoryEntry(received)
 		
 		var msg ClientMessage
 		err := json.Unmarshal(received, &msg)
@@ -145,8 +144,16 @@ func GetUsername(conn *net.TCPConn) string {
 	return ""
 }
 
-func AddHistoryEntry(msg []byte) {
-	entry := []byte(jsonEscape.ReplaceAll(msg, []byte("\\\"")))
+func AddHistoryEntry(msg ServerMessage) {
+	/*if msg == nil {
+		log.Printf("Nil message received!")
+		return
+	}*/
+	encoded, err := json.Marshal(msg)
+	if err != nil {
+		log.Fatal("Pella")
+	}
+	entry := []byte(jsonEscape.ReplaceAll(encoded, []byte("\\\"")))
 	History = append(History, entry)
 }
 
@@ -181,24 +188,34 @@ func main() {
 						}
 					}
 				case "msg":
-					BroadcastChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: GetUsername(msg.conn), Response : "message", Content: msg.Content, conn: msg.conn}
+					answer := ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: GetUsername(msg.conn), Response : "message", Content: msg.Content, conn: msg.conn}
+					AddHistoryEntry(answer)
+					BroadcastChan <- answer
 				case "names":
 					usernames := make([]string, 0)
 					for _, client := range Connections{
 						usernames = append(usernames, client.username)
 					}			
-					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response : "message", Content: strings.Join(usernames, "\n"), conn: msg.conn}
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response : "info", Content: strings.Join(usernames, "\n"), conn: msg.conn}
 				case "help":
-					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "message", Content: helpTextLoggedIn, conn: msg.conn}
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: helpTextLoggedIn, conn: msg.conn}
 				default:
 					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "Invalid request", conn: msg.conn}
 			}
 		} else {
 			switch msg.Request {
 				case "login":
+					nameUsed := false
 					for _, client := range Connections {
-						if msg.conn == client.conn {
-							if msg.Content != client.username {
+						if client.username == msg.Content {
+							SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "User already logged in.", conn: msg.conn}
+							nameUsed = true
+							break
+						}
+					}
+					if !nameUsed {
+						for _, client := range Connections {
+							if msg.conn == client.conn {
 								if nameCheck.MatchString(msg.Content){
 									client.username = msg.Content
 									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: "Login successful", conn: msg.conn}
@@ -206,14 +223,12 @@ func main() {
 								} else {
 									SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "Only alphanumerical usernames are acceptable.", conn: msg.conn}
 								}
-							} else {
-								SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "User already logged in!", conn: msg.conn}
+								break
 							}
-							break
 						}
 					}
 				case "help":
-					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "message", Content: helpTextNotLoggedIn, conn: msg.conn}
+					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "info", Content: helpTextNotLoggedIn, conn: msg.conn}
 				default:
 					SendChan <- ServerMessage{Timestamp: time.Now().Format(time.RFC850), Sender: "server", Response: "error", Content: "You are not logged in! Please use <help> for a list of commands.", conn: msg.conn}
 			}	
